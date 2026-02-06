@@ -1,2 +1,6 @@
-Flask
-requests
+aiohttp
+websockets
+numpy
+pandas
+scikit-learn
+python-dotenv

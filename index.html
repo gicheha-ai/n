@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EUR/USD Scalping Bot - Live Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Orbitron:wght@400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <header class="dashboard-header">
+            <div class="header-left">
+                <h1><i class="fas fa-chart-line"></i> EUR/USD SCALPING BOT</h1>
+                <div class="status-indicator">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="connectionStatus">Connecting...</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="clock" id="liveClock">--:--:--</div>
+                <div class="cycle-counter">
+                    <i class="fas fa-sync-alt"></i>
+                    <span id="cycleCount">0</span> cycles
+                </div>
+            </div>
+        </header>
+
+        <!-- MAIN DASHBOARD -->
+        <div class="dashboard-grid">
+            <!-- LEFT COLUMN: PRICE & TRADING -->
+            <div class="left-column">
+                <!-- PRICE CARD -->
+                <div class="card price-card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-euro-sign"></i> LIVE EUR/USD</h2>
+                        <div class="price-change" id="priceChange">
+                            <span id="changeDirection">→</span>
+                            <span id="changeAmount">0.0000</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="big-price" id="currentPrice">1.08500</div>
+                        <div class="price-metrics">
+                            <div class="metric">
+                                <span class="label">Bid</span>
+                                <span class="value" id="bidPrice">1.08490</span>
+                            </div>
+                            <div class="metric">
+                                <span class="label">Ask</span>
+                                <span class="value" id="askPrice">1.08510</span>
+                            </div>
+                            <div class="metric">
+                                <span class="label">Spread</span>
+                                <span class="value" id="spread">2.0</span><span class="unit">pips</span>
+                            </div>
+                        </div>
+                        <div class="price-history">
+                            <canvas id="priceChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ACTIVE TRADE CARD -->
+                <div class="card trade-card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-trade-federation"></i> ACTIVE TRADE</h2>
+                        <div class="trade-status" id="tradeStatus">No Active Trade</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="trade-info" id="tradeInfo">
+                            <div class="info-row">
+                                <span class="label">Direction:</span>
+                                <span class="value direction" id="tradeDirection">--</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Entry Price:</span>
+                                <span class="value" id="entryPrice">--.--</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Take Profit:</span>
+                                <span class="value profit" id="takeProfit">--.--</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Stop Loss:</span>
+                                <span class="value loss" id="stopLoss">--.--</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Size:</span>
+                                <span class="value" id="tradeSize">--</span>
+                            </div>
+                        </div>
+                        <div class="trade-progress">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                            </div>
+                            <div class="progress-labels">
+                                <span id="slLabel">SL</span>
+                                <span id="currentLabel">Current</span>
+                                <span id="tpLabel">TP</span>
+                            </div>
+                        </div>
+                        <div class="trade-timer">
+                            <i class="fas fa-clock"></i>
+                            <span id="tradeTimer">00:00</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PREDICTION CARD -->
+                <div class="card prediction-card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-crystal-ball"></i> NEXT PREDICTION</h2>
+                        <div class="countdown" id="predictionCountdown">120s</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="prediction-details" id="predictionDetails">
+                            <div class="prediction-direction">
+                                <span class="label">Predicted Move:</span>
+                                <span class="value" id="predictedDirection">--</span>
+                                <div class="confidence-badge" id="confidenceBadge">
+                                    <span id="confidenceValue">--%</span>
+                                </div>
+                            </div>
+                            <div class="prediction-metrics">
+                                <div class="metric">
+                                    <span class="label">Expected TP:</span>
+                                    <span class="value" id="expectedTP">--.--</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="label">Expected SL:</span>
+                                    <span class="value" id="expectedSL">--.--</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="label">Risk/Reward:</span>
+                                    <span class="value" id="expectedRR">--</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="prediction-signals">
+                            <h3><i class="fas fa-tools"></i> Tool Signals</h3>
+                            <div class="signal-grid" id="signalGrid">
+                                <!-- Signals will be dynamically added -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: PERFORMANCE & ML -->
+            <div class="right-column">
+                <!-- PERFORMANCE CARD -->
+                <div class="card performance-card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-trophy"></i> PERFORMANCE</h2>
+                        <div class="balance" id="virtualBalance">$10,000.00</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="performance-stats">
+                            <div class="stat">
+                                <div class="stat-label">Win Rate</div>
+                                <div class="stat-value" id="winRate">0%</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-label">Total Trades</div>
+                                <div class="stat-value" id="totalTrades">0</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-label">Profit/Loss</div>
+                                <div class="stat-value" id="totalPnl">$0.00</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-label">Profit Factor</div>
+                                <div class="stat-value" id="profitFactor">0.00</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-label">Max Drawdown</div>
+                                <div class="stat-value" id="maxDrawdown">0%</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-label">Avg Trade</div>
+                                <div class="stat-value" id="avgTrade">$0.00</div>
+                            </div>
+                        </div>
+                        <div class="performance-chart">
+                            <canvas id="equityChart"></canvas>
+                        </div>
+                        <div class="performance-history">
+                            <h3><i class="fas fa-history"></i> Recent Trades</h3>
+                            <div class="trade-list" id="tradeList">
+                                <!-- Trade history will be dynamically added -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ML LEARNING CARD -->
+                <div class="card ml-card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-brain"></i> ML LEARNING</h2>
+                        <div class="ml-status" id="mlStatus">Training...</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="ml-metrics">
+                            <div class="ml-metric">
+                                <div class="ml-label">Accuracy</div>
+                                <div class="ml-value" id="mlAccuracy">0%</div>
+                                <div class="ml-progress">
+                                    <div class="ml-progress-fill" id="accuracyProgress" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            <div class="ml-metric">
+                                <div class="ml-label">Training Samples</div>
+                                <div class="ml-value" id="trainingSamples">0</div>
+                            </div>
+                            <div class="ml-metric">
+                                <div class="ml-label">Feature Importance</div>
+                                <div class="ml-value" id="topFeature">--</div>
+                            </div>
+                        </div>
+                        <div class="feature-importance">
+                            <h3><i class="fas fa-sitemap"></i> Top Features</h3>
+                            <div class="feature-list" id="featureList">
+                                <!-- Features will be dynamically added -->
+                            </div>
+                        </div>
+                        <div class="ml-improvement">
+                            <h3><i class="fas fa-chart-line"></i> Learning Progress</h3>
+                            <canvas id="learningChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SYSTEM STATUS CARD -->
+                <div class="card system-card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-server"></i> SYSTEM STATUS</h2>
+                        <div class="system-indicator">
+                            <i class="fas fa-circle" id="systemIcon"></i>
+                            <span id="systemStatus">Operational</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="system-metrics">
+                            <div class="system-metric">
+                                <i class="fas fa-bolt"></i>
+                                <div class="metric-info">
+                                    <div class="metric-label">WebSocket</div>
+                                    <div class="metric-value" id="wsStatus">Connected</div>
+                                </div>
+                            </div>
+                            <div class="system-metric">
+                                <i class="fas fa-tachometer-alt"></i>
+                                <div class="metric-info">
+                                    <div class="metric-label">Update Rate</div>
+                                    <div class="metric-value" id="updateRate">1.22s</div>
+                                </div>
+                            </div>
+                            <div class="system-metric">
+                                <i class="fas fa-database"></i>
+                                <div class="metric-info">
+                                    <div class="metric-label">API Calls</div>
+                                    <div class="metric-value" id="apiCalls">0/min</div>
+                                </div>
+                            </div>
+                            <div class="system-metric">
+                                <i class="fas fa-clock"></i>
+                                <div class="metric-info">
+                                    <div class="metric-label">Uptime</div>
+                                    <div class="metric-value" id="uptime">00:00:00</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="system-controls">
+                            <button class="btn btn-start" id="startBtn">
+                                <i class="fas fa-play"></i> Start Bot
+                            </button>
+                            <button class="btn btn-stop" id="stopBtn">
+                                <i class="fas fa-stop"></i> Stop Bot
+                            </button>
+                            <button class="btn btn-reset" id="resetBtn">
+                                <i class="fas fa-redo"></i> Reset Data
+                            </button>
+                        </div>
+                        <div class="system-logs">
+                            <h3><i class="fas fa-terminal"></i> Live Logs</h3>
+                            <div class="log-container" id="logContainer">
+                                <!-- Logs will be dynamically added -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FOOTER -->
+        <footer class="dashboard-footer">
+            <div class="footer-left">
+                <div class="last-update">
+                    <i class="fas fa-sync"></i>
+                    Last update: <span id="lastUpdate">--:--:--</span>
+                </div>
+                <div class="cycle-info">
+                    <i class="fas fa-cogs"></i>
+                    Next analysis in: <span id="nextAnalysis">--s</span>
+                </div>
+            </div>
+            <div class="footer-right">
+                <div class="api-status">
+                    <i class="fas fa-plug"></i>
+                    Finnhub API: <span id="apiStatus">Active</span>
+                </div>
+                <div class="version">v1.0.0 | EUR/USD Scalping Bot</div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- SOUNDS -->
+    <audio id="tradeOpenSound" src="https://assets.mixkit.co/sfx/preview/mixkit-unlock-game-notification-253.mp3" preload="auto"></audio>
+    <audio id="tradeCloseSound" src="https://assets.mixkit.co/sfx/preview/mixkit-winning-chimes-2015.mp3" preload="auto"></audio>
+    <audio id="alertSound" src="https://assets.mixkit.co/sfx/preview/mixkit-retro-game-emergency-alarm-1000.mp3" preload="auto"></audio>
+
+    <!-- SCRIPTS -->
+    <script src="main.js"></script>
+</body>
+</html>
