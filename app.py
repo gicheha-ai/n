@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 # Your Finnhub API Key - Get from environment variable or hardcode
-FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "d632adhr01qnpqnvhljgd632adhr01qnpqnvhlk0")  # CHANGE THIS TO YOUR ACTUAL KEY
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "ckd632adhr01qnpqnvhljgd632adhr01qnpqnvhlk0")  # CHANGE THIS TO YOUR ACTUAL KEY
 FINNHUB_WEBHOOK_SECRET = os.getenv("FINNHUB_WEBHOOK_SECRET", "d631gf1r01qnpqnven8g")  # Your webhook secret
 
 # Port for Render
@@ -86,11 +86,16 @@ class MarketData:
     volume: Optional[float] = None
 
 # ============================================================================
-# PRICE MANAGER WITH SIMULATED DATA
+# FINNHUB WEBSOCKET MANAGER
 # ============================================================================
 
-class PriceManager:
-    def __init__(self):
+class FinnhubWebSocketManager:
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.ws_url = f"wss://ws.finnhub.io?token={api_key}"
+        self.ws = None
+        self.connected = False
+        
         # Throttling configuration
         self.throttle_interval = 1.22  # seconds
         self.last_broadcast = 0
@@ -99,16 +104,78 @@ class PriceManager:
         # Subscribers
         self.price_handlers = []
         
-        # Simulated price
+        # Fallback simulated price
         self.base_price = 1.08500
-        self.price_history = deque(maxlen=1000)
+        self.use_simulation = False
         
+    async def connect(self):
+        """Connect to Finnhub WebSocket"""
+        try:
+            # Try to connect to real Finnhub WebSocket
+            if self.api_key and self.api_key != "ckabcde1234567890":
+                self.ws = await websockets.connect(self.ws_url, ping_interval=20, ping_timeout=10)
+                await self.ws.send(json.dumps({'type': 'subscribe', 'symbol': 'OANDA:EUR_USD'}))
+                self.connected = True
+                self.use_simulation = False
+                logger.info("✅ Connected to Finnhub WebSocket")
+            else:
+                # Use simulation if no valid API key
+                self.use_simulation = True
+                self.connected = True
+                logger.info("ℹ️ Using simulated price data (no valid API key)")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Could not connect to Finnhub WebSocket: {e}")
+            logger.info("ℹ️ Falling back to simulated price data")
+            self.use_simulation = True
+            self.connected = True
+    
     async def start_price_stream(self):
-        """Start simulated price updates with 1.22s throttling"""
-        while True:
+        """Start receiving price updates"""
+        if not self.connected:
+            await self.connect()
+        
+        if self.use_simulation:
+            # Use simulated prices
+            await self._start_simulated_stream()
+        else:
+            # Use real WebSocket
+            await self._start_real_stream()
+    
+    async def _start_real_stream(self):
+        """Start real WebSocket stream"""
+        while self.connected and not self.use_simulation:
+            try:
+                message = await self.ws.recv()
+                data = json.loads(message)
+                
+                if data['type'] == 'trade' and data.get('data'):
+                    trade = data['data'][0]
+                    price_data = MarketData(
+                        price=trade['p'],
+                        timestamp=trade['t'] / 1000,
+                        bid=trade['p'] - 0.0001,
+                        ask=trade['p'] + 0.0001,
+                        spread=0.0002
+                    )
+                    
+                    # Apply server-side throttling
+                    await self._throttle_and_broadcast(price_data)
+                    
+            except websockets.exceptions.ConnectionClosed:
+                logger.warning("WebSocket connection closed. Switching to simulation...")
+                self.use_simulation = True
+                self.connected = True
+            except Exception as e:
+                logger.error(f"Error in price stream: {e}")
+                await asyncio.sleep(1)
+    
+    async def _start_simulated_stream(self):
+        """Start simulated price stream"""
+        while self.connected and self.use_simulation:
             try:
                 # Generate simulated price movement
-                price_change = np.random.normal(0, 0.0001)  # Small random walk
+                price_change = np.random.normal(0, 0.00005)  # Very small random walk
                 self.base_price += price_change
                 
                 # Keep price in reasonable range
@@ -125,10 +192,11 @@ class PriceManager:
                 # Apply server-side throttling
                 await self._throttle_and_broadcast(price_data)
                 
-                await asyncio.sleep(0.1)  # Check every 100ms
+                # Simulate realistic update frequency
+                await asyncio.sleep(0.1)
                 
             except Exception as e:
-                logger.error(f"Error in price stream: {e}")
+                logger.error(f"Error in simulated stream: {e}")
                 await asyncio.sleep(1)
     
     async def _throttle_and_broadcast(self, price_data: MarketData):
@@ -155,24 +223,32 @@ class PriceManager:
         """Subscribe to throttled price updates"""
         self.price_handlers.append(handler)
     
-    def add_price_history(self, price_data: MarketData):
-        """Add price to history"""
-        self.price_history.append(price_data)
+    async def disconnect(self):
+        """Disconnect from WebSocket"""
+        if self.ws and not self.use_simulation:
+            await self.ws.close()
+        self.connected = False
+        logger.info("Disconnected from price stream")
 
 # ============================================================================
 # SIMPLIFIED TOOLKIT
 # ============================================================================
 
 class ScalperToolkit:
-    def __init__(self, price_manager: PriceManager):
-        self.price_manager = price_manager
+    def __init__(self):
+        # Price history
+        self.price_history = deque(maxlen=1000)
+        
+    def add_price(self, price_data: MarketData):
+        """Add price to history"""
+        self.price_history.append(price_data)
         
     async def analyze_market(self, current_price: float) -> Dict[str, float]:
         """Run complete market analysis with simulated tools"""
         analysis = {}
         
         # Get recent prices for calculations
-        prices = [p.price for p in self.price_manager.price_history]
+        prices = [p.price for p in self.price_history]
         if not prices:
             prices = [current_price]
         
@@ -653,10 +729,12 @@ class TradingEngine:
 # ============================================================================
 
 class ScalpingTradingBot:
-    def __init__(self):
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        
         # Initialize components
-        self.price_manager = PriceManager()
-        self.toolkit = ScalperToolkit(self.price_manager)
+        self.ws_manager = FinnhubWebSocketManager(api_key)
+        self.toolkit = ScalperToolkit()
         self.ml_predictor = MLPredictor()
         self.trading_engine = TradingEngine()
         
@@ -684,6 +762,9 @@ class ScalpingTradingBot:
         # Load saved data
         self.trading_engine.load_from_storage()
         
+        # Connect to WebSocket
+        await self.ws_manager.connect()
+        
         logger.info("Bot initialized successfully")
     
     def add_websocket_handler(self, handler):
@@ -698,7 +779,7 @@ class ScalpingTradingBot:
     async def handle_price_update(self, price_data: MarketData):
         """Handle incoming price updates"""
         self.current_price = price_data.price
-        self.price_manager.add_price_history(price_data)
+        self.toolkit.add_price(price_data)
         
         # Check open trades
         self.trading_engine.check_trades(self.current_price)
@@ -820,7 +901,8 @@ class ScalpingTradingBot:
     async def broadcast_system_status(self):
         """Broadcast system status to frontend"""
         status = {
-            'ws_connected': True,
+            'ws_connected': self.ws_manager.connected,
+            'using_simulation': self.ws_manager.use_simulation,
             'api_calls_per_min': 0,
             'system_status': 'operational' if self.running else 'stopped'
         }
@@ -841,16 +923,16 @@ class ScalpingTradingBot:
         
         try:
             # Subscribe to price updates
-            self.price_manager.subscribe_price(self.handle_price_update)
+            self.ws_manager.subscribe_price(self.handle_price_update)
             
             # Start price stream
-            asyncio.create_task(self.price_manager.start_price_stream())
+            asyncio.create_task(self.ws_manager.start_price_stream())
             
             # Start keep-alive pings
             asyncio.create_task(self.ping_keepalive())
             
             # Display initial status
-            logger.info("Bot started successfully")
+            logger.info("✅ Bot started successfully")
             
             # Main loop
             while self.running:
@@ -871,7 +953,7 @@ class ScalpingTradingBot:
     async def start(self):
         """Start the bot"""
         if not self.running:
-            asyncio.create_task(self.run())
+            await self.run()
     
     async def stop(self):
         """Stop the bot"""
@@ -880,6 +962,9 @@ class ScalpingTradingBot:
     async def cleanup(self):
         """Cleanup resources"""
         logger.info("Cleaning up resources...")
+        
+        # Disconnect from WebSocket
+        await self.ws_manager.disconnect()
         
         # Save final state
         self.trading_engine.save_to_storage()
@@ -923,7 +1008,7 @@ async def disconnect(sid):
 @sio.event
 async def start_bot(sid):
     logger.info('Starting bot from frontend')
-    if bot and not bot.running:
+    if bot:
         await bot.start()
         await sio.emit('log', {
             'message': 'Bot started successfully',
@@ -1003,17 +1088,31 @@ async def finnhub_webhook(request):
 
 # Static file serving
 async def serve_index(request):
-    return web.FileResponse('./index.html')
+    try:
+        return web.FileResponse('./index.html')
+    except:
+        return web.Response(text="Dashboard not found. Please make sure index.html exists.", status=404)
 
 async def serve_js(request):
-    return web.FileResponse('./main.js')
+    try:
+        return web.FileResponse('./main.js')
+    except:
+        return web.Response(text="JavaScript file not found.", status=404)
 
 async def serve_css(request):
-    return web.FileResponse('./style.css')
+    try:
+        return web.FileResponse('./style.css')
+    except:
+        return web.Response(text="CSS file not found.", status=404)
 
 # Health check endpoint for Render
 async def health_check(request):
-    return web.json_response({"status": "ok", "timestamp": time.time()})
+    return web.json_response({
+        "status": "ok", 
+        "timestamp": time.time(),
+        "bot_running": bot.running if bot else False,
+        "ws_connected": bot.ws_manager.connected if bot else False
+    })
 
 # Setup routes
 app.router.add_get('/', serve_index)
@@ -1029,8 +1128,8 @@ app.router.add_get('/health', health_check)
 async def main():
     global bot
     
-    # Create bot instance
-    bot = ScalpingTradingBot()
+    # Create bot instance with your API key
+    bot = ScalpingTradingBot(FINNHUB_API_KEY)
     
     # Add WebSocket handler for frontend communication
     bot.add_websocket_handler(bot_websocket_handler)
@@ -1039,10 +1138,10 @@ async def main():
     await bot.initialize()
     
     # Start the server
-    logger.info(f"Starting server on port {PORT}")
-    logger.info(f"Dashboard available at: http://localhost:{PORT}")
-    logger.info(f"Finnhub webhook endpoint: http://localhost:{PORT}/webhook/finnhub")
-    logger.info(f"Health check: http://localhost:{PORT}/health")
+    logger.info(f"🚀 Starting server on port {PORT}")
+    logger.info(f"📊 Dashboard available at: http://localhost:{PORT}")
+    logger.info(f"🔗 Finnhub webhook endpoint: http://localhost:{PORT}/webhook/finnhub")
+    logger.info(f"❤️ Health check: http://localhost:{PORT}/health")
     
     runner = web.AppRunner(app)
     await runner.setup()
