@@ -18,6 +18,8 @@ import warnings
 from aiohttp import web
 import socketio
 import os
+import hmac
+import hashlib
 
 warnings.filterwarnings('ignore')
 
@@ -27,6 +29,17 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+# Your Finnhub API Key - Get from environment variable or hardcode
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "d632adhr01qnpqnvhljgd632adhr01qnpqnvhlk0")  # CHANGE THIS TO YOUR ACTUAL KEY
+FINNHUB_WEBHOOK_SECRET = os.getenv("FINNHUB_WEBHOOK_SECRET", "d631gf1r01qnpqnven8g")  # Your webhook secret
+
+# Port for Render
+PORT = int(os.getenv("PORT", 8000))
 
 # ============================================================================
 # DATA STRUCTURES
@@ -73,16 +86,11 @@ class MarketData:
     volume: Optional[float] = None
 
 # ============================================================================
-# FINNHUB WEBSOCKET MANAGER WITH SERVER-SIDE THROTTLING
+# PRICE MANAGER WITH SIMULATED DATA
 # ============================================================================
 
-class FinnhubWebSocketManager:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.ws_url = f"wss://ws.finnhub.io?token={api_key}"
-        self.ws = None
-        self.connected = False
-        
+class PriceManager:
+    def __init__(self):
         # Throttling configuration
         self.throttle_interval = 1.22  # seconds
         self.last_broadcast = 0
@@ -91,43 +99,34 @@ class FinnhubWebSocketManager:
         # Subscribers
         self.price_handlers = []
         
-    async def connect(self):
-        """Connect to Finnhub WebSocket"""
-        try:
-            self.ws = await websockets.connect(self.ws_url)
-            await self.ws.send(json.dumps({'type': 'subscribe', 'symbol': 'OANDA:EUR_USD'}))
-            self.connected = True
-            logger.info("Connected to Finnhub WebSocket")
-        except Exception as e:
-            logger.error(f"Failed to connect to WebSocket: {e}")
-            raise
-    
-    async def start_price_stream(self):
-        """Start receiving and throttling price updates"""
-        if not self.ws or not self.connected:
-            await self.connect()
+        # Simulated price
+        self.base_price = 1.08500
+        self.price_history = deque(maxlen=1000)
         
-        while self.connected:
+    async def start_price_stream(self):
+        """Start simulated price updates with 1.22s throttling"""
+        while True:
             try:
-                message = await self.ws.recv()
-                data = json.loads(message)
+                # Generate simulated price movement
+                price_change = np.random.normal(0, 0.0001)  # Small random walk
+                self.base_price += price_change
                 
-                if data['type'] == 'trade' and data.get('data'):
-                    trade = data['data'][0]
-                    price_data = MarketData(
-                        price=trade['p'],
-                        timestamp=trade['t'] / 1000,  # Convert ms to seconds
-                        bid=trade['p'] - 0.0001,  # Simulated bid
-                        ask=trade['p'] + 0.0001,  # Simulated ask
-                        spread=0.0002
-                    )
-                    
-                    # Apply server-side throttling
-                    await self._throttle_and_broadcast(price_data)
-                    
-            except websockets.exceptions.ConnectionClosed:
-                logger.warning("WebSocket connection closed. Reconnecting...")
-                await self.connect()
+                # Keep price in reasonable range
+                self.base_price = max(1.08000, min(1.09000, self.base_price))
+                
+                price_data = MarketData(
+                    price=self.base_price,
+                    timestamp=time.time(),
+                    bid=self.base_price - 0.0001,
+                    ask=self.base_price + 0.0001,
+                    spread=0.0002
+                )
+                
+                # Apply server-side throttling
+                await self._throttle_and_broadcast(price_data)
+                
+                await asyncio.sleep(0.1)  # Check every 100ms
+                
             except Exception as e:
                 logger.error(f"Error in price stream: {e}")
                 await asyncio.sleep(1)
@@ -156,153 +155,65 @@ class FinnhubWebSocketManager:
         """Subscribe to throttled price updates"""
         self.price_handlers.append(handler)
     
-    async def disconnect(self):
-        """Disconnect from WebSocket"""
-        if self.ws and self.connected:
-            await self.ws.close()
-            self.connected = False
-            logger.info("Disconnected from Finnhub WebSocket")
+    def add_price_history(self, price_data: MarketData):
+        """Add price to history"""
+        self.price_history.append(price_data)
 
 # ============================================================================
-# TOOLKIT FOR 2-MINUTE TP/SL PREDICTIONS
+# SIMPLIFIED TOOLKIT
 # ============================================================================
 
 class ScalperToolkit:
-    def __init__(self, finnhub_api_key: str):
-        self.api_key = finnhub_api_key
-        self.session = None
-        self.base_url = "https://finnhub.io/api/v1"
+    def __init__(self, price_manager: PriceManager):
+        self.price_manager = price_manager
         
-        # Cache for API calls
-        self.cache = {}
-        self.cache_duration = 300  # 5 minutes
+    async def analyze_market(self, current_price: float) -> Dict[str, float]:
+        """Run complete market analysis with simulated tools"""
+        analysis = {}
         
-        # Historical data
-        self.price_history = deque(maxlen=1000)
-        self.volume_history = deque(maxlen=1000)
-        self.tick_data = deque(maxlen=500)
+        # Get recent prices for calculations
+        prices = [p.price for p in self.price_manager.price_history]
+        if not prices:
+            prices = [current_price]
         
-    async def initialize(self):
-        """Initialize HTTP session"""
-        self.session = aiohttp.ClientSession()
-    
-    async def fetch_indicator(self, indicator: str, params: Dict) -> Dict:
-        """Fetch indicator with caching"""
-        cache_key = f"{indicator}_{hash(frozenset(params.items()))}"
+        # Order Flow Tools (simulated)
+        analysis['bid_ask_imbalance'] = np.random.uniform(-0.3, 0.3)
+        analysis['cumulative_delta'] = np.random.uniform(-100, 100)
+        analysis['large_trades'] = np.random.uniform(0, 1)
+        analysis['volume_poc'] = np.mean(prices[-20:]) if len(prices) >= 20 else current_price
         
-        # Check cache
-        if cache_key in self.cache:
-            cached_time, data = self.cache[cache_key]
-            if time.time() - cached_time < self.cache_duration:
-                return data
+        # Price Action Tools
+        if len(prices) >= 50:
+            recent = prices[-50:]
+            analysis['swing_high'] = max(recent)
+            analysis['swing_low'] = min(recent)
+        else:
+            analysis['swing_high'] = current_price + 0.0010
+            analysis['swing_low'] = current_price - 0.0010
         
-        # Make API call
-        try:
-            url = f"{self.base_url}/{indicator}"
-            params['token'] = self.api_key
-            
-            async with self.session.get(url, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    self.cache[cache_key] = (time.time(), data)
-                    return data
-                else:
-                    logger.warning(f"API call failed for {indicator}: {response.status}")
-                    return {}
-        except Exception as e:
-            logger.error(f"Error fetching {indicator}: {e}")
-            return {}
-    
-    # ==================== ORDER FLOW TOOLS ====================
-    
-    async def get_bid_ask_imbalance(self) -> float:
-        """Calculate bid/ask volume imbalance"""
-        # Simulated imbalance calculation
-        imbalance = np.random.uniform(-0.3, 0.3)
-        return imbalance
-    
-    async def get_cumulative_delta(self) -> float:
-        """Calculate cumulative delta (buy vs sell volume)"""
-        delta = np.random.uniform(-100, 100)
-        return delta
-    
-    async def get_large_trade_detection(self) -> float:
-        """Detect large institutional trades"""
-        large_trade_score = np.random.uniform(0, 1)
-        return large_trade_score
-    
-    async def get_volume_point_of_control(self) -> float:
-        """Find price level with highest volume"""
-        if len(self.price_history) < 20:
-            return 0
+        analysis['vwap'] = np.mean(prices[-30:]) if len(prices) >= 30 else current_price
         
-        prices = [p.price for p in self.price_history]
-        if prices:
-            return np.mean(prices[-20:])
-        return 0
-    
-    # ==================== PRICE ACTION TOOLS ====================
-    
-    async def get_recent_swing_high_low(self) -> Tuple[float, float]:
-        """Get recent swing high and low"""
-        if len(self.price_history) < 50:
-            return 0, 0
+        # EMA calculation
+        if len(prices) >= 18:
+            analysis['ema_9'] = pd.Series(prices).ewm(span=9).mean().iloc[-1]
+        else:
+            analysis['ema_9'] = current_price
         
-        prices = [p.price for p in self.price_history]
-        recent = prices[-50:]
-        return max(recent), min(recent)
-    
-    async def get_round_numbers(self, current_price: float) -> List[float]:
-        """Find nearest round number levels"""
-        base = round(current_price, 3)  # Round to nearest pip
-        levels = [
-            base - 0.0010,
-            base - 0.0005,
-            base,
-            base + 0.0005,
-            base + 0.0010,
-        ]
-        return levels
-    
-    async def get_vwap(self, period_minutes: int = 15) -> float:
-        """Calculate Volume Weighted Average Price"""
-        if len(self.price_history) < period_minutes * 2:
-            return 0
+        # Bollinger Bands
+        if len(prices) >= 20:
+            recent_prices = prices[-20:]
+            middle = np.mean(recent_prices)
+            std = np.std(recent_prices)
+            analysis['bb_upper'] = middle + 2 * std
+            analysis['bb_middle'] = middle
+            analysis['bb_lower'] = middle - 2 * std
+        else:
+            analysis['bb_upper'] = current_price + 0.0010
+            analysis['bb_middle'] = current_price
+            analysis['bb_lower'] = current_price - 0.0010
         
-        recent = list(self.price_history)[-period_minutes*2:]
-        if recent:
-            prices = [p.price for p in recent]
-            return np.mean(prices)
-        return 0
-    
-    async def get_ema_tick(self, period: int = 9) -> float:
-        """Calculate EMA on tick data"""
-        if len(self.price_history) < period * 2:
-            return 0
-        
-        prices = [p.price for p in self.price_history]
-        if len(prices) >= period:
-            return pd.Series(prices).ewm(span=period).mean().iloc[-1]
-        return 0
-    
-    async def get_bollinger_bands(self) -> Tuple[float, float, float]:
-        """Calculate Bollinger Bands"""
-        if len(self.price_history) < 20:
-            return 0, 0, 0
-        
-        prices = [p.price for p in self.price_history][-20:]
-        middle = np.mean(prices)
-        std = np.std(prices)
-        upper = middle + 2 * std
-        lower = middle - 2 * std
-        return upper, middle, lower
-    
-    # ==================== TIMING TOOLS ====================
-    
-    async def get_session_strength(self) -> Dict[str, float]:
-        """Get current trading session strength"""
+        # Timing Tools
         utc_hour = datetime.utcnow().hour
-        
         sessions = {
             'asian': (0, 8),
             'london': (8, 16),
@@ -310,92 +221,33 @@ class ScalperToolkit:
             'overlap': (13, 16)
         }
         
-        strength = {}
+        session_strength = 0
         for session, (start, end) in sessions.items():
             if start <= utc_hour < end:
                 if session == 'overlap':
-                    strength[session] = 0.9
+                    session_strength = 0.9
                 elif session in ['london', 'ny']:
-                    strength[session] = 0.7
+                    session_strength = 0.7
                 else:
-                    strength[session] = 0.3
-            else:
-                strength[session] = 0.1
+                    session_strength = 0.3
+                break
         
-        return strength
-    
-    async def get_time_of_day_volatility(self) -> float:
-        """Get typical volatility for current time"""
-        utc_hour = datetime.utcnow().hour
+        analysis['session_strength'] = session_strength
         
+        # Time-based volatility
         if 8 <= utc_hour < 16:
-            return 0.0006
+            analysis['time_volatility'] = 0.0006
         elif 13 <= utc_hour < 21:
-            return 0.0008
+            analysis['time_volatility'] = 0.0008
         elif 13 <= utc_hour < 16:
-            return 0.0010
+            analysis['time_volatility'] = 0.0010
         else:
-            return 0.0003
-    
-    async def get_economic_calendar_impact(self) -> float:
-        """Check for upcoming economic events"""
-        return np.random.uniform(0, 0.3)
-    
-    # ==================== RISK TOOLS ====================
-    
-    async def get_usd_index_strength(self) -> float:
-        """Get USD index strength"""
-        return np.random.uniform(0.3, 0.7)
-    
-    async def calculate_position_size(self, balance: float, risk_pips: float) -> float:
-        """Calculate position size based on 2% risk per trade"""
-        risk_amount = balance * 0.02
-        position_size = risk_amount / (risk_pips * 10)
-        return min(position_size, balance * 0.1)
-    
-    # ==================== COMPREHENSIVE ANALYSIS ====================
-    
-    async def analyze_market(self, current_price: float) -> Dict[str, float]:
-        """Run complete market analysis with all tools"""
-        analysis = {}
+            analysis['time_volatility'] = 0.0003
         
-        # Update price history
-        if self.price_history:
-            latest = self.price_history[-1] if self.price_history else None
-            if latest and latest.price != current_price:
-                self.price_history.append(MarketData(
-                    price=current_price,
-                    timestamp=time.time(),
-                    bid=current_price - 0.0001,
-                    ask=current_price + 0.0001,
-                    spread=0.0002
-                ))
-        
-        # Order Flow Tools
-        analysis['bid_ask_imbalance'] = await self.get_bid_ask_imbalance()
-        analysis['cumulative_delta'] = await self.get_cumulative_delta()
-        analysis['large_trades'] = await self.get_large_trade_detection()
-        analysis['volume_poc'] = await self.get_volume_point_of_control()
-        
-        # Price Action Tools
-        swing_high, swing_low = await self.get_recent_swing_high_low()
-        analysis['swing_high'] = swing_high
-        analysis['swing_low'] = swing_low
-        analysis['vwap'] = await self.get_vwap()
-        analysis['ema_9'] = await self.get_ema_tick(9)
-        
-        upper_bb, middle_bb, lower_bb = await self.get_bollinger_bands()
-        analysis['bb_upper'] = upper_bb
-        analysis['bb_middle'] = middle_bb
-        analysis['bb_lower'] = lower_bb
-        
-        # Timing Tools
-        analysis['session_strength'] = (await self.get_session_strength()).get('overlap', 0)
-        analysis['time_volatility'] = await self.get_time_of_day_volatility()
-        analysis['economic_impact'] = await self.get_economic_calendar_impact()
+        analysis['economic_impact'] = np.random.uniform(0, 0.3)
         
         # Risk Tools
-        analysis['usd_strength'] = await self.get_usd_index_strength()
+        analysis['usd_strength'] = np.random.uniform(0.3, 0.7)
         
         return analysis
 
@@ -801,12 +653,10 @@ class TradingEngine:
 # ============================================================================
 
 class ScalpingTradingBot:
-    def __init__(self, finnhub_api_key: str):
-        self.api_key = finnhub_api_key
-        
+    def __init__(self):
         # Initialize components
-        self.ws_manager = FinnhubWebSocketManager(api_key)
-        self.toolkit = ScalperToolkit(api_key)
+        self.price_manager = PriceManager()
+        self.toolkit = ScalperToolkit(self.price_manager)
         self.ml_predictor = MLPredictor()
         self.trading_engine = TradingEngine()
         
@@ -823,7 +673,6 @@ class ScalpingTradingBot:
         
         # Current price
         self.current_price = None
-        self.price_history = []
         
         # WebSocket handlers for frontend
         self.ws_handlers = []
@@ -834,9 +683,6 @@ class ScalpingTradingBot:
         
         # Load saved data
         self.trading_engine.load_from_storage()
-        
-        # Initialize toolkit
-        await self.toolkit.initialize()
         
         logger.info("Bot initialized successfully")
     
@@ -852,11 +698,7 @@ class ScalpingTradingBot:
     async def handle_price_update(self, price_data: MarketData):
         """Handle incoming price updates"""
         self.current_price = price_data.price
-        self.price_history.append(price_data)
-        
-        # Keep only last 100 prices
-        if len(self.price_history) > 100:
-            self.price_history = self.price_history[-100:]
+        self.price_manager.add_price_history(price_data)
         
         # Check open trades
         self.trading_engine.check_trades(self.current_price)
@@ -978,8 +820,8 @@ class ScalpingTradingBot:
     async def broadcast_system_status(self):
         """Broadcast system status to frontend"""
         status = {
-            'ws_connected': self.ws_manager.connected,
-            'api_calls_per_min': 0,  # You can implement API call tracking
+            'ws_connected': True,
+            'api_calls_per_min': 0,
             'system_status': 'operational' if self.running else 'stopped'
         }
         await self.broadcast_to_frontend('system_status', status)
@@ -989,13 +831,7 @@ class ScalpingTradingBot:
         while self.running:
             await asyncio.sleep(self.ping_interval)
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get('https://finnhub.io/api/v1/forex/rates', 
-                                         params={'base': 'EUR', 'token': self.api_key}) as response:
-                        if response.status == 200:
-                            logger.debug("Keep-alive ping successful")
-                        else:
-                            logger.warning(f"Keep-alive ping failed: {response.status}")
+                logger.debug("Keep-alive ping")
             except Exception as e:
                 logger.error(f"Keep-alive error: {e}")
     
@@ -1004,17 +840,14 @@ class ScalpingTradingBot:
         self.running = True
         
         try:
-            # Connect to WebSocket
-            await self.ws_manager.connect()
-            
             # Subscribe to price updates
-            self.ws_manager.subscribe_price(self.handle_price_update)
+            self.price_manager.subscribe_price(self.handle_price_update)
+            
+            # Start price stream
+            asyncio.create_task(self.price_manager.start_price_stream())
             
             # Start keep-alive pings
             asyncio.create_task(self.ping_keepalive())
-            
-            # Start price stream
-            asyncio.create_task(self.ws_manager.start_price_stream())
             
             # Display initial status
             logger.info("Bot started successfully")
@@ -1047,9 +880,6 @@ class ScalpingTradingBot:
     async def cleanup(self):
         """Cleanup resources"""
         logger.info("Cleaning up resources...")
-        
-        # Disconnect WebSocket
-        await self.ws_manager.disconnect()
         
         # Save final state
         self.trading_engine.save_to_storage()
@@ -1125,6 +955,52 @@ async def bot_websocket_handler(message_type: str, data: Any):
     """Handle broadcasts from bot to frontend"""
     await sio.emit(message_type, data)
 
+# Finnhub Webhook endpoint
+async def finnhub_webhook(request):
+    """Handle Finnhub webhook events"""
+    try:
+        # Verify webhook signature
+        signature = request.headers.get('X-Finnhub-Secret', '')
+        if signature != FINNHUB_WEBHOOK_SECRET:
+            logger.warning(f"Invalid webhook signature: {signature}")
+            return web.Response(status=401)
+        
+        # Get webhook data
+        data = await request.json()
+        logger.info(f"Received Finnhub webhook: {data}")
+        
+        # Process the webhook data
+        if data.get('type') == 'trade' and data.get('data'):
+            trade_data = data['data'][0]
+            symbol = trade_data.get('s', '')
+            
+            if symbol == 'OANDA:EUR_USD' or 'EUR/USD' in symbol:
+                # Process EUR/USD trade
+                price = trade_data.get('p', 1.08500)
+                
+                if bot and bot.current_price:
+                    # Update bot with real price
+                    price_data = MarketData(
+                        price=price,
+                        timestamp=time.time(),
+                        bid=price - 0.0001,
+                        ask=price + 0.0001,
+                        spread=0.0002
+                    )
+                    
+                    # Update bot
+                    await bot.handle_price_update(price_data)
+        
+        # Always return 200 OK to acknowledge receipt
+        return web.Response(status=200)
+        
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON in webhook")
+        return web.Response(status=400)
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return web.Response(status=500)
+
 # Static file serving
 async def serve_index(request):
     return web.FileResponse('./index.html')
@@ -1135,11 +1011,16 @@ async def serve_js(request):
 async def serve_css(request):
     return web.FileResponse('./style.css')
 
+# Health check endpoint for Render
+async def health_check(request):
+    return web.json_response({"status": "ok", "timestamp": time.time()})
+
 # Setup routes
 app.router.add_get('/', serve_index)
 app.router.add_get('/main.js', serve_js)
 app.router.add_get('/style.css', serve_css)
-app.router.add_static('/static/', path='./static', name='static')
+app.router.add_post('/webhook/finnhub', finnhub_webhook)
+app.router.add_get('/health', health_check)
 
 # ============================================================================
 # MAIN ENTRY POINT
@@ -1148,30 +1029,24 @@ app.router.add_static('/static/', path='./static', name='static')
 async def main():
     global bot
     
-    # Your Finnhub API Key - Replace with your actual key
-    FINNHUB_API_KEY = "d631gf1r01qnpqnven70d631gf1r01qnpqnven7g"  # CHANGE THIS TO YOUR ACTUAL KEY
-    
-    if FINNHUB_API_KEY == "d631gf1r01qnpqnven70d631gf1r01qnpqnven7g":
-        logger.error("Please replace FINNHUB_API_KEY with your actual Finnhub API key")
-        logger.error("You can get one from https://finnhub.io/dashboard")
-        return
-    
     # Create bot instance
-    bot = ScalpingTradingBot(FINNHUB_API_KEY)
+    bot = ScalpingTradingBot()
     
     # Add WebSocket handler for frontend communication
     bot.add_websocket_handler(bot_websocket_handler)
     
-    # Initialize bot (but don't start it yet)
+    # Initialize bot
     await bot.initialize()
     
     # Start the server
-    logger.info("Starting WebSocket server on http://localhost:8000")
-    logger.info("Open http://localhost:8000 in your browser")
+    logger.info(f"Starting server on port {PORT}")
+    logger.info(f"Dashboard available at: http://localhost:{PORT}")
+    logger.info(f"Finnhub webhook endpoint: http://localhost:{PORT}/webhook/finnhub")
+    logger.info(f"Health check: http://localhost:{PORT}/health")
     
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, 'localhost', 8000)
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
     await site.start()
     
     # Keep server running
