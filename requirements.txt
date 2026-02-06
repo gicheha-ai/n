@@ -3,4 +3,4 @@ websockets
 numpy
 pandas
 scikit-learn
-python-dotenv
+python-socketio
